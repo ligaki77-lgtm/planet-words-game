@@ -12,12 +12,16 @@
     .score-panel, .player-panel{
         position:absolute; top:20px; font-size:24px; font-weight:800;
         text-shadow:0 0 10px #00ccff; color: #fff;
-        background: rgba(0,20,50,0.8); padding: 10px 25px; 
+        background: rgba(0,20,50,0.8); padding: 15px 25px; 
         border-radius: 15px; border: 2px solid #00ccff; z-index: 1000;
         backdrop-filter: blur(8px);
     }
     .score-panel{ left:20px; }
-    #speed-display { font-size: 16px; color: #ffcc00; display: block; margin-top: 5px; }
+    /* 左上角速度调整区域样式 */
+    #speed-config-area { font-size: 14px; color: #ffcc00; margin-top: 8px; border-top: 1px solid rgba(0,204,255,0.3); padding-top: 8px; }
+    #speed-config-area input { background: #000; color: #ffcc00; border: 1px solid #ffcc00; width: 45px; padding: 2px 5px; border-radius: 4px; font-weight: bold; }
+    #current-speed-text { font-size: 16px; color: #00ccff; display: block; margin-top: 5px; }
+
     .player-panel{ right:20px; }
 
     /* 目标球体基础样式 */
@@ -68,14 +72,22 @@
     </div>
     <div id="transition" class="panel" style="display:none;"></div>
     <div id="ranking" class="panel" style="display:none;"></div>
-    <div class="score-panel">得分: <span id="scoreDisplay">0</span><span id="speed-display">速度: 1.0x</span></div>
+    
+    <div class="score-panel">
+        得分: <span id="scoreDisplay">0</span>
+        <div id="speed-config-area">
+            <div id="setting-speed-ui">起始速度: <input id="startSpeedInput" type="number" step="0.1" value="1.0"></div>
+            <span id="current-speed-text">当前流速: 1.0x</span>
+        </div>
+    </div>
+
     <div class="player-panel" id="currentPlayerDisplay"></div>
     <div class="cannon"><div id="ship"></div></div>
 </div>
 
 <script>
 let audioCtx, wordPool=[], shuffledWords=[], players=[], playerIndex=0;
-let score=0, activeWords=[], running=false, comboSpeed=1.0, gameTime=45000;
+let score=0, activeWords=[], running=false, comboSpeed=1.0, gameTime=45000, lockedInitialSpeed=1.0;
 const ship = document.getElementById("ship"), bgm = document.getElementById("gameBgm");
 
 // 1. 星空背景
@@ -90,7 +102,7 @@ function drawStars(){
     requestAnimationFrame(drawStars);
 }
 
-// 2. 音效
+// 2. 音效 (略，保持原样)
 function playSfx(input) {
     if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     if(audioCtx.state === 'suspended') audioCtx.resume();
@@ -124,6 +136,7 @@ function initGame() {
     bgm.volume = 0.1; bgm.play().catch(()=>{});
     wordPool = document.getElementById("wordInput").value.split(/[,，]/).map(s=>s.trim());
     gameTime = (parseInt(document.getElementById("gameDuration").value) || 45) * 1000;
+    
     let n = parseInt(document.getElementById("playerCount").value) || 1;
     players = []; for(let i=0; i<n; i++) players.push({name: "飞行员 "+(i+1), score: 0});
     document.getElementById("setup").style.display="none";
@@ -135,51 +148,50 @@ function preparePlayer() {
     t.innerHTML = `<h2>${players[playerIndex].name}</h2><p>目标已锁定</p><button onclick="startGame()">发射</button>`;
     t.style.display = "block";
     document.getElementById("ranking").style.display = "none";
+    // 准备阶段，显示调节框
+    document.getElementById("setting-speed-ui").style.display = "block";
 }
 
 function startGame() {
     document.getElementById("transition").style.display = "none";
-    score = 0; comboSpeed = 1.0; running = true; activeWords = [];
+    
+    // 【修改核心】：正式开始时锁定起始速度，并隐藏输入框
+    lockedInitialSpeed = parseFloat(document.getElementById("startSpeedInput").value) || 1.0;
+    comboSpeed = lockedInitialSpeed;
+    document.getElementById("setting-speed-ui").style.display = "none"; 
+    
+    score = 0; running = true; activeWords = [];
     shuffledWords = [...wordPool].sort(() => Math.random() - 0.5);
     document.getElementById("scoreDisplay").textContent = "0";
+    updateSpeedUI();
     document.getElementById("currentPlayerDisplay").textContent = players[playerIndex].name;
     createWord(-150); setTimeout(() => createWord(-400), 1000); 
     setTimeout(endRound, gameTime);
 }
 
-// 【关键修改点：createWord 函数现在只有一个，且内部完全解耦】
+function updateSpeedUI() {
+    document.getElementById("current-speed-text").textContent = `当前流速: ${comboSpeed.toFixed(1)}x`;
+}
+
 function createWord(yOffset = null) {
     if (!running) return;
     if (shuffledWords.length === 0) shuffledWords = [...wordPool].sort(() => Math.random() - 0.5);
-    
     const txt = shuffledWords.pop();
     const el = document.createElement("div");
     el.className = "target-word";
     el.textContent = txt;
-
-    // 随机选择星球编号
     const num = Math.floor(Math.random() * 3) + 1; 
     el.style.backgroundImage = `url("planet${num}.png")`;
 
-    // --- 在这里，你可以为每个星球单独设置外观和文字位置 ---
     if (num === 1) {
-        el.style.width = "130px";
-        el.style.height = "130px";
-        el.style.paddingTop = "70px";   // 越小越靠上
-        el.style.fontSize = "23px";      
-        el.style.color = "#ffffff";      // 1号星球字色
+        el.style.width = "130px"; el.style.height = "130px";
+        el.style.paddingTop = "70px"; el.style.fontSize = "23px"; el.style.color = "#ffffff";
     } else if (num === 2) {
-        el.style.width = "80px";
-        el.style.height = "80px";
-        el.style.paddingTop = "20px";   // 2号星球文字位置
-        el.style.fontSize = "30px";     
-        el.style.color = "#ffffff";
+        el.style.width = "80px"; el.style.height = "80px";
+        el.style.paddingTop = "20px"; el.style.fontSize = "30px"; el.style.color = "#ffffff";
     } else if (num === 3) {
-        el.style.width = "100px";
-        el.style.height = "100px";
-        el.style.paddingTop = "35px";   // 3号星球文字位置
-        el.style.fontSize = "25px";
-        el.style.color = "#ffffff";     // 3号星球换个颜色
+        el.style.width = "100px"; el.style.height = "100px";
+        el.style.paddingTop = "35px"; el.style.fontSize = "25px"; el.style.color = "#ffffff";
     }
 
     const sideMargin = 280; 
@@ -206,7 +218,9 @@ function update() {
         el.style.top = (top + comboSpeed) + "px";
         if (top > h) {
             el.remove(); activeWords.splice(i, 1);
-            comboSpeed = Math.max(1.0, comboSpeed - 0.2); 
+            // 漏球减速，最低不低于锁定的起始速度
+            comboSpeed = Math.max(lockedInitialSpeed, comboSpeed - 0.2); 
+            updateSpeedUI();
             createWord(); 
         }
     });
@@ -231,7 +245,7 @@ function handleShoot(e, targetEl) {
         document.body.appendChild(boom); setTimeout(()=>boom.remove(), 400);
         score += 10; document.getElementById("scoreDisplay").textContent = score;
         comboSpeed += 0.05;
-        document.getElementById("speed-display").textContent = `流速: ${comboSpeed.toFixed(1)}x`;
+        updateSpeedUI();
         targetEl.remove();
         activeWords = activeWords.filter(w => w !== targetEl);
         setTimeout(() => { if(activeWords.length < 3) createWord(); }, 200);
