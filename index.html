@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>星际射击：Vocabulary Planet</title>
+<style>
+    body{ margin:0; overflow:hidden; font-family: 'Microsoft YaHei', Arial; color:#00ccff; background: #050510; }
+    canvas#stars{ position:absolute; top:0; left:0; width:100%; height:100%; z-index:0; }
+    .game-container{ position:relative; width:100vw; height:100vh; z-index:1; }
+
+    /* UI 面板 */
+    .score-panel, .player-panel{
+        position:absolute; top:20px; font-size:24px; font-weight:800;
+        text-shadow:0 0 10px #00ccff; color: #fff;
+        background: rgba(0,20,50,0.8); padding: 10px 25px; 
+        border-radius: 15px; border: 2px solid #00ccff; z-index: 1000;
+        backdrop-filter: blur(8px);
+    }
+    .score-panel{ left:20px; }
+    #speed-display { font-size: 16px; color: #ffcc00; display: block; margin-top: 5px; }
+    .player-panel{ right:20px; }
+
+    /* 目标球体基础样式 */
+    .target-word {
+        position: absolute; 
+        background-position: center; background-size: contain; background-repeat: no-repeat;
+        display: flex; align-items: flex-start; justify-content: center; text-align: center;
+        box-sizing: border-box; 
+        color: #FFFFFF; font-weight: 900; text-shadow: 2px 2px 4px #000;
+        cursor: crosshair; z-index: 5; user-select: none;
+    }
+
+    /* 飞船与爆破 */
+    .cannon { position: absolute; bottom: 20px; left: 50%; width: 100px; height: 100px; transform: translateX(-50%); z-index: 90; }
+    #ship { width: 100px; height: 100px; background-image: url("ship.png"); background-size: contain; background-repeat: no-repeat; transform-origin: center center; }
+    .shell { position: absolute; width: 12px; height: 12px; background: radial-gradient(#fff, #ffcc00); border-radius: 50%; z-index: 85; box-shadow: 0 0 10px #ffcc00; }
+    .explosion{ position:absolute; width:80px; height:80px; background:radial-gradient(circle, #fff, #00ccff, transparent); border-radius:50%; animation:boom 0.4s forwards; z-index:100;}
+    @keyframes boom{ from{transform:scale(0.5);opacity:1;} to{transform:scale(2);opacity:0;} }
+
+    /* 配置面板 */
+    .panel {
+        position:absolute; top:45%; left:50%; transform:translate(-50%,-50%);
+        background:rgba(0,10,30,0.95); backdrop-filter: blur(10px);
+        border:2px solid #00ccff; padding:40px; text-align:center;
+        box-shadow:0 0 40px rgba(0,204,255,0.4); z-index:2000; border-radius: 20px;
+    }
+    textarea, input { background:#000; color:#00ccff; border:1px solid #004466; padding:10px; margin:5px 0; border-radius:8px; outline:none; font-size: 16px; }
+    .input-group { margin: 15px 0; font-weight: bold; }
+    button { background:transparent; color:#00ccff; border:2px solid #00ccff; padding:12px 40px; cursor:pointer; font-weight:bold; border-radius:50px; font-size: 18px; transition: 0.3s; margin-top: 10px; }
+    button:hover { background:#00ccff; color:#000; box-shadow:0 0 20px #00ccff; }
+
+    .champion { color: #ffcc00; font-size: 28px; font-weight: 900; text-shadow: 0 0 15px #ffcc00; animation: glow 1s infinite alternate; }
+    @keyframes glow { from { text-shadow: 0 0 10px #ffcc00; } to { text-shadow: 0 0 25px #fff700; } }
+</style>
+</head>
+<body>
+
+<audio id="gameBgm" loop><source src="bgm.mp3" type="audio/mpeg"></audio>
+<canvas id="stars"></canvas>
+
+<div class="game-container">
+    <div id="setup" class="panel">
+        <h2>🚀 词汇星球</h2>
+        <textarea id="wordInput" rows="3" style="width:300px;">你好,再见,高兴,太阳,月亮</textarea>
+        <div class="input-group">参赛人数 <input id="playerCount" type="number" value="1" style="width:60px;"> 人</div>
+        <div class="input-group">每轮时间 <input id="gameDuration" type="number" value="45" style="width:60px;"> 秒</div>
+        <button onclick="initGame()">准备出发</button>
+    </div>
+    <div id="transition" class="panel" style="display:none;"></div>
+    <div id="ranking" class="panel" style="display:none;"></div>
+    <div class="score-panel">得分: <span id="scoreDisplay">0</span><span id="speed-display">流速: 1.0x</span></div>
+    <div class="player-panel" id="currentPlayerDisplay"></div>
+    <div class="cannon"><div id="ship"></div></div>
+</div>
+
+<script>
+let audioCtx, wordPool=[], shuffledWords=[], players=[], playerIndex=0;
+let score=0, activeWords=[], running=false, comboSpeed=1.0, gameTime=45000;
+const ship = document.getElementById("ship"), bgm = document.getElementById("gameBgm");
+
+// 1. 星空背景
+const canvas=document.getElementById("stars"), ctx=canvas.getContext("2d");
+let w, h; function resize(){ w=canvas.width=window.innerWidth; h=canvas.height=window.innerHeight; }
+window.onresize = resize; resize();
+let stars=[]; for(let i=0;i<120;i++) stars.push({x:Math.random()*w, y:Math.random()*h, s:Math.random()*2, v:Math.random()*0.5+0.2});
+function drawStars(){
+    ctx.fillStyle = "#050510"; ctx.fillRect(0,0,w,h); ctx.fillStyle="#fff";
+    stars.forEach(s=>{ ctx.beginPath(); ctx.arc(s.x, s.y, s.s, 0, Math.PI*2); ctx.fill(); s.y += s.v; if(s.y > h) s.y = 0; });
+    if(running) update();
+    requestAnimationFrame(drawStars);
+}
+
+// 2. 音效
+function playSfx(input) {
+    if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if(audioCtx.state === 'suspended') audioCtx.resume();
+    const now = audioCtx.currentTime;
+    if (input === 'explosion') {
+        const bufferSize = audioCtx.sampleRate * 0.3;
+        const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+        const source = audioCtx.createBufferSource(); source.buffer = buffer;
+        const filter = audioCtx.createBiquadFilter(); filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(1000, now); filter.frequency.exponentialRampToValueAtTime(40, now + 0.2);
+        const gain = audioCtx.createGain(); gain.gain.setValueAtTime(0.4, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+        source.connect(filter); filter.connect(gain); gain.connect(audioCtx.destination);
+        source.start(); source.stop(now + 0.3);
+    } else {
+        const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
+        osc.type = 'triangle'; osc.frequency.setValueAtTime(typeof input === 'number' ? input : 440, now);
+        gain.gain.setValueAtTime(0.05, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+        osc.connect(gain); gain.connect(audioCtx.destination);
+        osc.start(); osc.stop(now + 0.3);
+    }
+}
+function playVictorySfx() {
+    const notes = [523.25, 659.25, 783.99, 1046.50]; 
+    notes.forEach((freq, i) => setTimeout(() => playSfx(freq), i * 150));
+}
+
+// 3. 游戏核心
+function initGame() {
+    bgm.volume = 0.1; bgm.play().catch(()=>{});
+    wordPool = document.getElementById("wordInput").value.split(/[,，]/).map(s=>s.trim());
+    gameTime = (parseInt(document.getElementById("gameDuration").value) || 45) * 1000;
+    let n = parseInt(document.getElementById("playerCount").value) || 1;
+    players = []; for(let i=0; i<n; i++) players.push({name: "飞行员 "+(i+1), score: 0});
+    document.getElementById("setup").style.display="none";
+    preparePlayer();
+}
+
+function preparePlayer() {
+    let t = document.getElementById("transition");
+    t.innerHTML = `<h2>${players[playerIndex].name}</h2><p>目标已锁定</p><button onclick="startGame()">发射</button>`;
+    t.style.display = "block";
+    document.getElementById("ranking").style.display = "none";
+}
+
+function startGame() {
+    document.getElementById("transition").style.display = "none";
+    score = 0; comboSpeed = 1.0; running = true; activeWords = [];
+    shuffledWords = [...wordPool].sort(() => Math.random() - 0.5);
+    document.getElementById("scoreDisplay").textContent = "0";
+    document.getElementById("currentPlayerDisplay").textContent = players[playerIndex].name;
+    createWord(-150); setTimeout(() => createWord(-400), 1000); 
+    setTimeout(endRound, gameTime);
+}
+
+// 【关键修改点：createWord 函数现在只有一个，且内部完全解耦】
+function createWord(yOffset = null) {
+    if (!running) return;
+    if (shuffledWords.length === 0) shuffledWords = [...wordPool].sort(() => Math.random() - 0.5);
+    
+    const txt = shuffledWords.pop();
+    const el = document.createElement("div");
+    el.className = "target-word";
+    el.textContent = txt;
+
+    // 随机选择星球编号
+    const num = Math.floor(Math.random() * 3) + 1; 
+    el.style.backgroundImage = `url("planet${num}.png")`;
+
+    // --- 在这里，你可以为每个星球单独设置外观和文字位置 ---
+    if (num === 1) {
+        el.style.width = "130px";
+        el.style.height = "130px";
+        el.style.paddingTop = "70px";   // 越小越靠上
+        el.style.fontSize = "23px";      
+        el.style.color = "#ffffff";      // 1号星球字色
+    } else if (num === 2) {
+        el.style.width = "80px";
+        el.style.height = "80px";
+        el.style.paddingTop = "20px";   // 2号星球文字位置
+        el.style.fontSize = "30px";     
+        el.style.color = "#ffffff";
+    } else if (num === 3) {
+        el.style.width = "100px";
+        el.style.height = "100px";
+        el.style.paddingTop = "35px";   // 3号星球文字位置
+        el.style.fontSize = "25px";
+        el.style.color = "#ffffff";     // 3号星球换个颜色
+    }
+
+    const sideMargin = 280; 
+    let startX, startTop, isOverlapping = true, attempts = 0;
+    while (isOverlapping && attempts < 15) {
+        attempts++;
+        startX = sideMargin + Math.random() * (window.innerWidth - sideMargin * 2 - 120);
+        startTop = yOffset !== null ? yOffset : -(150 + Math.random() * 250);
+        isOverlapping = activeWords.some(other => {
+            const dx = Math.abs(startX - parseFloat(other.style.left));
+            const dy = Math.abs(startTop - parseFloat(other.style.top));
+            return dx < 140 && dy < 140;
+        });
+    }
+    el.style.left = startX + "px"; el.style.top = startTop + "px";
+    el.onmousedown = (e) => handleShoot(e, el);
+    document.body.appendChild(el);
+    activeWords.push(el);
+}
+
+function update() {
+    activeWords.forEach((el, i) => {
+        let top = parseFloat(el.style.top);
+        el.style.top = (top + comboSpeed) + "px";
+        if (top > h) {
+            el.remove(); activeWords.splice(i, 1);
+            comboSpeed = Math.max(1.0, comboSpeed - 0.2); 
+            createWord(); 
+        }
+    });
+    if (running && activeWords.length < 2) createWord();
+}
+
+function handleShoot(e, targetEl) {
+    if (!running) return;
+    const shipRect = ship.getBoundingClientRect();
+    const shipX = shipRect.left + shipRect.width/2, shipY = shipRect.top + shipRect.height/2;
+    ship.style.transform = `rotate(${Math.atan2(e.clientY - shipY, e.clientX - shipX) * 180 / Math.PI + 90}deg)`;
+    const shell = document.createElement("div");
+    shell.className = "shell"; shell.style.left = shipX + "px"; shell.style.top = shipY + "px";
+    document.body.appendChild(shell);
+    shell.animate([{left:shipX+'px',top:shipY+'px'}, {left:e.clientX+'px',top:e.clientY+'px'}], {duration:150});
+    setTimeout(() => {
+        shell.remove();
+        if (!targetEl.parentNode) return;
+        playSfx('explosion'); 
+        const boom = document.createElement("div");
+        boom.className = "explosion"; boom.style.left = (e.clientX-40)+"px"; boom.style.top = (e.clientY-40)+"px";
+        document.body.appendChild(boom); setTimeout(()=>boom.remove(), 400);
+        score += 10; document.getElementById("scoreDisplay").textContent = score;
+        comboSpeed += 0.05;
+        document.getElementById("speed-display").textContent = `流速: ${comboSpeed.toFixed(1)}x`;
+        targetEl.remove();
+        activeWords = activeWords.filter(w => w !== targetEl);
+        setTimeout(() => { if(activeWords.length < 3) createWord(); }, 200);
+    }, 150);
+}
+
+function endRound() {
+    running = false; activeWords.forEach(w => w.remove()); activeWords = [];
+    players[playerIndex].score = score;
+    playerIndex++;
+    if (playerIndex < players.length) preparePlayer();
+    else showFinalRank();
+}
+
+function showFinalRank() {
+    playVictorySfx(); 
+    players.sort((a,b) => b.score - a.score);
+    let res = "<h2>🏆 星际荣誉榜</h2>";
+    players.forEach((p, i) => {
+        res += (i === 0) ? `<p class="champion">👑 ${p.name}: ${p.score}分</p>` : `<p>${i+1}. ${p.name}: ${p.score}分</p>`;
+    });
+    res += `<button onclick="location.reload()">再玩一次</button>`;
+    const r = document.getElementById("ranking"); r.innerHTML = res; r.style.display = "block";
+}
+drawStars();
+</script>
+</body>
+</html>
